@@ -1,0 +1,187 @@
+
+  def parse_and_validate(data) do
+    {:ok, filesize, data} = parse_riff_chunk(data)
+
+    {:ok, format_code, data} = parse_format_code(data)
+
+    {:ok, data} =
+      case format_code do
+        1 -> parse_pcm(data)
+        0xFFFE -> parse_extensible(data)
+        _ -> parse_non_pcm(data)
+      end
+  end
+
+  defp parse_non_pcm(data) do
+
+  end
+
+  defp parse_pcm(data) do
+    <<
+      "data"::binary,
+      data_size::l32(),
+      data::binary
+    >> = data
+
+    {:ok, %{data_size: data_size, data: data}}
+  end
+
+  defp parse_format_code(data) do
+    <<
+      "fmt "::binary,
+      fmt_chunk_size::l32(),
+      format_code::l16(),
+      rest::binary
+    >> = data
+
+    case {fmt_chunk_size, format_code} do
+      {16, 1} -> {:ok, format_code, rest}
+      {40, 0xFFFE} -> {:ok, format_code, rest}
+      {18, _} -> {:ok, format_code, rest}
+    end
+  end
+
+  defp parse_riff_chunk(data) do
+    <<
+      "RIFF"::binary,
+      filesize::l32(),
+      "WAVE"::binary,
+      rest::binary
+    >> = data
+
+    if filesize == byte_size(rest) + 4 do
+      {:ok, filesize, rest}
+    else
+      {:error, :incorrect_filesize}
+    end
+  end
+
+  # def parse_and_validate(data) do
+  #   {:ok, filesize, data} = parse_riff_header(data)
+  #   {:ok, fmt_data, data} = parse_fmt_chunk(data)
+  #
+  #   <<
+  #     ## data chunk
+  #     "data"::binary,
+  #     data_size::l32(),
+  #     data::binary
+  #   >> = data
+  #
+  #   if validate(
+  #        fmt_data.byte_rate,
+  #        fmt_data.block_align,
+  #        fmt_data.sample_rate,
+  #        fmt_data.bits_per_sample,
+  #        fmt_data.num_channels
+  #      ) do
+  #     # data = for <<i::ls16() <- data>>, do: i
+  #
+  #     {:ok,
+  #      Map.merge(fmt_data, %{
+  #        filesize: filesize,
+  #        data_size: data_size,
+  #        data: data
+  #      })}
+  #   else
+  #     {:error, :bad_data}
+  #   end
+  # end
+  #
+  # defp validate(byte_rate, block_align, sample_rate, bits_per_sample, num_channels) do
+  #   byte_rate == sample_rate * bits_per_sample * num_channels / 8 &&
+  #     block_align == bits_per_sample * num_channels / 8
+  # end
+  #
+  # def parse_riff_header(data) do
+  #   <<
+  #     "RIFF"::binary,
+  #     filesize::l32(),
+  #     "WAVE"::binary,
+  #     rest::binary
+  #   >> = data
+  #
+  #   {:ok, filesize, rest}
+  # end
+  #
+  # def parse_fmt_chunk(data) do
+  #   <<
+  #     "fmt "::binary,
+  #     subchunk1_size::l32(),
+  #     rest::binary
+  #   >> = data
+  #
+  #   <<
+  #     audio_format::l16(),
+  #     num_channels::l16(),
+  #     sample_rate::l32(),
+  #     byte_rate::l32(),
+  #     block_align::l16(),
+  #     bits_per_sample::l16(),
+  #     rest::binary
+  #   >> = rest
+  #
+  #   if subchunk1_size == 16 do
+  #     {:ok,
+  #      %{
+  #        subchunk1_size: subchunk1_size,
+  #        audio_format: audio_format,
+  #        num_channels: num_channels,
+  #        sample_rate: sample_rate,
+  #        byte_rate: byte_rate,
+  #        block_align: block_align,
+  #        bits_per_sample: bits_per_sample
+  #      }, rest}
+  #   else
+  #     <<
+  #       extra_param_size::l16(),
+  #       rest::binary
+  #     >> = rest
+  #
+  #     <<
+  #       extra::bytes-size(extra_param_size),
+  #       rest::binary
+  #     >> = rest
+  #
+  #     {:ok,
+  #      %{
+  #        extra: extra,
+  #        subchunk1_size: subchunk1_size,
+  #        audio_format: audio_format,
+  #        num_channels: num_channels,
+  #        sample_rate: sample_rate,
+  #        byte_rate: byte_rate,
+  #        block_align: block_align,
+  #        bits_per_sample: bits_per_sample
+  #      }, rest}
+  #   end
+  # end
+
+  def write(data, filename) do
+    audio_data =
+      Enum.map(data, fn x -> round(x * 0.5) end)
+      |> Enum.map(fn i -> <<i::ls16()>> end)
+
+    audio_data = Enum.reduce(audio_data, <<>>, fn d, acc -> acc <> d end)
+    audio_size = byte_size(audio_data)
+
+    filesize = 36 + audio_size
+
+    file_data = <<
+      "RIFF"::binary,
+      filesize::l32(),
+      "WAVE"::binary,
+      "fmt "::binary,
+      16::l32(),
+      1::l16(),
+      1::l16(),
+      22050::l32(),
+      44100::l32(),
+      2::l16(),
+      16::l16(),
+      "data"::binary,
+      audio_size::l32(),
+      audio_data::binary
+    >>
+
+    File.write(filename, file_data)
+  end
