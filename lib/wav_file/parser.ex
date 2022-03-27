@@ -1,6 +1,8 @@
 defmodule Surfex.WavFile.Parser do
   import Surfex.ParsingMacros
 
+  @wav_format_extensible 0xFFFE
+
   def parse(data) do
     {:ok, header_data, rest} = parse_riff_chunk(data)
     {:ok, fmt_code_data, rest} = parse_fmt_code(rest)
@@ -27,6 +29,43 @@ defmodule Surfex.WavFile.Parser do
   end
 
   def parse_fmt_data(data, 1) do
+    parse_shared_fmt_data(data)
+  end
+
+  def parse_fmt_data(data, @wav_format_extensible) do
+    {:ok, fmt_data, rest} = parse_shared_fmt_data(data)
+
+    <<
+      22::l16(),
+      valid_bits_per_sample::l16(),
+      channel_mask::l32(),
+      subformat::bytes-size(16),
+      rest::binary
+    >> = rest
+
+    {:ok,
+     Map.merge(
+       fmt_data,
+       %{
+         valid_bits_per_sample: valid_bits_per_sample,
+         channel_mask: channel_mask,
+         subformat: subformat
+       }
+     ), rest}
+  end
+
+  def parse_fmt_data(data, _) do
+    {:ok, fmt_data, rest} = parse_shared_fmt_data(data)
+
+    <<
+      0::l16(),
+      rest::binary
+    >> = rest
+
+    {:ok, fmt_data, rest}
+  end
+
+  def parse_shared_fmt_data(data) do
     <<num_channels::l16(), sample_rate::l32(), bytes_per_sec::l32(), block_align::l16(),
       bits_per_sample::l16(), rest::binary>> = data
 
@@ -40,76 +79,20 @@ defmodule Surfex.WavFile.Parser do
      }, rest}
   end
 
-  def parse_fmt_data(data, 0xFFFE) do
-    <<
-      num_channels::l16(),
-      sample_rate::l32(),
-      bytes_per_sec::l32(),
-      block_align::l16(),
-      bits_per_sample::l16(),
-      22::l16(),
-      valid_bits_per_sample::l16(),
-      channel_mask::l32(),
-      subformat::bytes-size(16),
-      rest::binary
-    >> = data
-
-    {:ok,
-     %{
-       num_channels: num_channels,
-       sample_rate: sample_rate,
-       bytes_per_sec: bytes_per_sec,
-       block_align: block_align,
-       bits_per_sample: bits_per_sample,
-       valid_bits_per_sample: valid_bits_per_sample,
-       channel_mask: channel_mask,
-       subformat: subformat
-     }, rest}
-  end
-
-  def parse_fmt_data(data, _) do
-    <<
-      num_channels::l16(),
-      sample_rate::l32(),
-      bytes_per_sec::l32(),
-      block_align::l16(),
-      bits_per_sample::l16(),
-      0::l16(),
-      rest::binary
-    >> = data
-
-    {:ok,
-     %{
-       num_channels: num_channels,
-       sample_rate: sample_rate,
-       bytes_per_sec: bytes_per_sec,
-       block_align: block_align,
-       bits_per_sample: bits_per_sample
-     }, rest}
-  end
-
   def parse_fact_data(data, 1, _), do: {:ok, %{}, data}
 
-  def parse_fact_data(data, 0xFFFE, subformat) do
-    <<format::l16(), _::binary>> = subformat
-
-    case format do
-      1 ->
-        {:ok, %{}, data}
-
-      _ ->
-        <<
-          "fact"::binary,
-          fact_chunk_size::l32(),
-          sample_length::l32(),
-          rest::binary
-        >> = data
-
-        {:ok, %{fact_chunk_size: fact_chunk_size, sample_length: sample_length}, rest}
+  def parse_fact_data(data, @wav_format_extensible, subformat) do
+    case subformat do
+      <<1::l16(), _::binary>> -> {:ok, %{}, data}
+      _ -> parse_shared_fact_data(data)
     end
   end
 
   def parse_fact_data(data, _, _) do
+    parse_shared_fact_data(data)
+  end
+
+  def parse_shared_fact_data(data) do
     <<
       "fact"::binary,
       fact_chunk_size::l32(),
